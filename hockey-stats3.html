@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Hockey Stats">
+  <title>Youth Hockey Stats Tracker</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+    }
+    #root {
+      min-height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const HockeyStatsTracker = () => {
+      const defaultPlayers = [
+        { id: 1, name: 'Bowie', number: '1' },
+        { id: 2, name: 'Trent', number: '2' },
+        { id: 3, name: 'Logan', number: '3' },
+        { id: 4, name: 'Sonny', number: '4' },
+        { id: 5, name: 'Owen', number: '5' },
+        { id: 6, name: 'Cayde', number: '6' },
+      ];
+
+      const defaultStats = {
+        individualGoals: 0,
+        shiftGoals: 0,
+        assists: 0,
+        shotAttempts: 0,
+        takeaways: 0,
+        giveaways: 0,
+        defensivePlays: 0,
+        shotBlocks: 0,
+        shotsAgainst: 0,
+        goalsAgainst: 0,
+        timeInDefensiveZone: 0,
+        penaltyMinutes: 0,
+        gameSuspensions: 0,
+      };
+
+      const [players, setPlayers] = useState(defaultPlayers);
+      const [games, setGames] = useState([]);
+      const [currentGame, setCurrentGame] = useState(null);
+      const [selectedPlayer, setSelectedPlayer] = useState(null);
+      const [view, setView] = useState('track');
+      const [selectedGameId, setSelectedGameId] = useState(null);
+      const [isLoading, setIsLoading] = useState(true);
+
+      useEffect(() => {
+        loadData();
+      }, []);
+
+      const loadData = () => {
+        try {
+          const playersData = localStorage.getItem('hockey-players');
+          const gamesData = localStorage.getItem('hockey-games');
+          const currentGameData = localStorage.getItem('hockey-current-game');
+          
+          if (playersData) {
+            setPlayers(JSON.parse(playersData));
+          }
+          
+          if (gamesData) {
+            setGames(JSON.parse(gamesData));
+          }
+
+          if (currentGameData) {
+            setCurrentGame(JSON.parse(currentGameData));
+          } else {
+            startNewGame();
+          }
+          
+          setSelectedPlayer(defaultPlayers[0].id);
+        } catch (error) {
+          console.log('No saved data, starting fresh');
+          startNewGame();
+          setSelectedPlayer(defaultPlayers[0].id);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      const saveData = (newCurrentGame = currentGame, newGames = games, newPlayers = players) => {
+        try {
+          if (newCurrentGame) {
+            localStorage.setItem('hockey-current-game', JSON.stringify(newCurrentGame));
+          }
+          localStorage.setItem('hockey-games', JSON.stringify(newGames));
+          localStorage.setItem('hockey-players', JSON.stringify(newPlayers));
+        } catch (error) {
+          console.error('Error saving data:', error);
+        }
+      };
+
+      const startNewGame = () => {
+        const initialStats = {};
+        players.forEach(player => {
+          initialStats[player.id] = { ...defaultStats };
+        });
+        
+        const newGame = {
+          id: Date.now(),
+          date: new Date().toISOString(),
+          stats: initialStats,
+          opponent: '',
+          location: '',
+          result: ''
+        };
+        
+        setCurrentGame(newGame);
+        saveData(newGame, games, players);
+      };
+
+      const finishGame = (gameDate, opponent, location, result) => {
+        if (!currentGame) return;
+        
+        const completedGame = {
+          ...currentGame,
+          date: gameDate || currentGame.date,
+          opponent: opponent || 'Opponent',
+          location: location || '',
+          result: result || '',
+          completedAt: new Date().toISOString()
+        };
+        
+        const newGames = [completedGame, ...games];
+        setGames(newGames);
+        
+        const initialStats = {};
+        players.forEach(player => {
+          initialStats[player.id] = { ...defaultStats };
+        });
+        
+        const newGame = {
+          id: Date.now(),
+          date: new Date().toISOString(),
+          stats: initialStats,
+          opponent: '',
+          location: '',
+          result: ''
+        };
+        
+        setCurrentGame(newGame);
+        saveData(newGame, newGames, players);
+      };
+
+      const updateStat = (playerId, statName, delta) => {
+        if (!currentGame) return;
+        
+        const newStats = {
+          ...currentGame.stats,
+          [playerId]: {
+            ...currentGame.stats[playerId],
+            [statName]: Math.max(0, (currentGame.stats[playerId]?.[statName] || 0) + delta)
+          }
+        };
+        
+        const updatedGame = { ...currentGame, stats: newStats };
+        setCurrentGame(updatedGame);
+        saveData(updatedGame, games, players);
+      };
+
+      const calculatePlusMinus = (playerStats) => {
+        return playerStats.shiftGoals - playerStats.goalsAgainst;
+      };
+
+      const calculatePoints = (playerStats) => {
+        return playerStats.individualGoals + playerStats.assists;
+      };
+
+      const calculateShootingPct = (playerStats) => {
+        if (playerStats.shotAttempts === 0) return 0;
+        return ((playerStats.individualGoals / playerStats.shotAttempts) * 100).toFixed(1);
+      };
+
+      const getCumulativeStats = (playerId) => {
+        const cumulative = { ...defaultStats };
+        
+        games.forEach(game => {
+          const gameStats = game.stats[playerId] || defaultStats;
+          Object.keys(cumulative).forEach(stat => {
+            cumulative[stat] += gameStats[stat];
+          });
+        });
+        
+        if (currentGame) {
+          const currentStats = currentGame.stats[playerId] || defaultStats;
+          Object.keys(cumulative).forEach(stat => {
+            cumulative[stat] += currentStats[stat];
+          });
+        }
+        
+        return cumulative;
+      };
+
+      const deleteGame = (gameId) => {
+        if (window.confirm('Delete this game? This cannot be undone.')) {
+          const newGames = games.filter(g => g.id !== gameId);
+          setGames(newGames);
+          saveData(currentGame, newGames, players);
+          setSelectedGameId(null);
+        }
+      };
+
+      const deleteAllGames = () => {
+        if (window.confirm('Delete ALL games? This will keep the current game but delete all history. This cannot be undone.')) {
+          setGames([]);
+          saveData(currentGame, [], players);
+        }
+      };
+
+      const updatePlayerName = (playerId, name, number) => {
+        const newPlayers = players.map(p => 
+          p.id === playerId ? { ...p, name, number } : p
+        );
+        setPlayers(newPlayers);
+        saveData(currentGame, games, newPlayers);
+      };
+
+      // Export Functions
+      const exportToCSV = (type) => {
+        let csvContent = '';
+        let filename = '';
+
+        if (type === 'season') {
+          // Season stats CSV
+          csvContent = 'Player,Number,Games,Goals,Assists,Points,Shots,Shot %,+/-,Takeaways,Giveaways,Def Plays,Shot Blocks,PIM,Suspensions\n';
+          
+          players.forEach(player => {
+            const stats = getCumulativeStats(player.id);
+            const gamesPlayed = games.length + 1;
+            const points = calculatePoints(stats);
+            const shotPct = calculateShootingPct(stats);
+            const plusMinus = calculatePlusMinus(stats);
+            
+            csvContent += `${player.name},${player.number},${gamesPlayed},${stats.individualGoals},${stats.assists},${points},${stats.shotAttempts},${shotPct}%,${plusMinus},${stats.takeaways},${stats.giveaways},${stats.defensivePlays},${stats.shotBlocks},${stats.penaltyMinutes},${stats.gameSuspensions}\n`;
+          });
+          
+          filename = 'season-stats.csv';
+        } else if (type === 'games') {
+          // Game by game CSV
+          csvContent = 'Date,Opponent,Location,Result,Player,Goals,Assists,Points,Shots,Shot %,+/-,Takeaways,Giveaways,PIM\n';
+          
+          games.forEach(game => {
+            const dateStr = new Date(game.date).toLocaleDateString();
+            players.forEach(player => {
+              const stats = game.stats[player.id] || defaultStats;
+              const points = calculatePoints(stats);
+              const shotPct = calculateShootingPct(stats);
+              const plusMinus = calculatePlusMinus(stats);
+              csvContent += `${dateStr},${game.opponent},${game.location},${game.result},${player.name},${stats.individualGoals},${stats.assists},${points},${stats.shotAttempts},${shotPct}%,${plusMinus},${stats.takeaways},${stats.giveaways},${stats.penaltyMinutes}\n`;
+            });
+          });
+          
+          filename = 'game-by-game-stats.csv';
+        }
+
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        window.URL.revokeObjectURL(url);
+      };
+
+      const generatePDF = () => {
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+        
+        // Title
+        doc.setFontSize(20);
+        doc.text('Season Stats Report', 105, 20, { align: 'center' });
+        
+        doc.setFontSize(10);
+        doc.text(`Games Played: ${games.length + 1}`, 105, 30, { align: 'center' });
+        doc.text(`Generated: ${new Date().toLocaleDateString()}`, 105, 35, { align: 'center' });
+        
+        let yPos = 50;
+        
+        players.forEach((player, index) => {
+          if (yPos > 250) {
+            doc.addPage();
+            yPos = 20;
+          }
+          
+          const stats = getCumulativeStats(player.id);
+          const gamesPlayed = games.length + 1;
+          const points = calculatePoints(stats);
+          const shotPct = calculateShootingPct(stats);
+          const plusMinus = calculatePlusMinus(stats);
+          
+          // Player header
+          doc.setFontSize(14);
+          doc.setFont(undefined, 'bold');
+          doc.text(`#${player.number} ${player.name}`, 20, yPos);
+          
+          doc.setFontSize(10);
+          doc.setFont(undefined, 'normal');
+          yPos += 8;
+          
+          // Stats
+          doc.text(`Goals: ${stats.individualGoals} (${(stats.individualGoals / gamesPlayed).toFixed(1)}/game)`, 25, yPos);
+          yPos += 6;
+          doc.text(`Assists: ${stats.assists} (${(stats.assists / gamesPlayed).toFixed(1)}/game)`, 25, yPos);
+          yPos += 6;
+          doc.text(`Points: ${points} (${(points / gamesPlayed).toFixed(1)}/game)`, 25, yPos);
+          yPos += 6;
+          doc.text(`Shots: ${stats.shotAttempts} (${shotPct}%)`, 25, yPos);
+          yPos += 6;
+          doc.text(`Plus/Minus: ${plusMinus > 0 ? '+' : ''}${plusMinus}`, 25, yPos);
+          yPos += 6;
+          doc.text(`Takeaways: ${stats.takeaways}`, 25, yPos);
+          yPos += 6;
+          doc.text(`Giveaways: ${stats.giveaways}`, 25, yPos);
+          yPos += 6;
+          doc.text(`Defensive Plays: ${stats.defensivePlays}`, 25, yPos);
+          yPos += 6;
+          doc.text(`Penalty Minutes: ${stats.penaltyMinutes}`, 25, yPos);
+          yPos += 12;
+        });
+        
+        doc.save('season-stats-report.pdf');
+      };
+
+      if (isLoading) {
+        return (
+          <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+            <div className="text-white text-xl">Loading...</div>
+          </div>
+        );
+      }
+
+      if (!currentGame) return null;
+
+      const currentPlayer = players.find(p => p.id === selectedPlayer);
+      const currentStats = currentGame.stats[selectedPlayer] || defaultStats;
+
+      const StatButton = ({ label, value, statKey }) => (
+        <div className="bg-slate-800 rounded-lg p-3 mb-3">
+          <div className="text-slate-400 text-sm mb-2">{label}</div>
+          <div className="flex items-center justify-between gap-2">
+            <button
+              onClick={() => updateStat(selectedPlayer, statKey, -1)}
+              className="bg-red-600 hover:bg-red-700 text-white text-2xl font-bold w-14 h-14 rounded-lg active:scale-95 transition-transform"
+            >
+              -
+            </button>
+            <div className="text-white text-3xl font-bold flex-1 text-center">
+              {value}
+            </div>
+            <button
+              onClick={() => updateStat(selectedPlayer, statKey, 1)}
+              className="bg-green-600 hover:bg-green-700 text-white text-2xl font-bold w-14 h-14 rounded-lg active:scale-95 transition-transform"
+            >
+              +
+            </button>
+          </div>
+        </div>
+      );
+
+      const TrackingView = () => {
+        const [showFinishModal, setShowFinishModal] = useState(false);
+        const [gameDate, setGameDate] = useState('');
+        const [opponent, setOpponent] = useState('');
+        const [location, setLocation] = useState('');
+        const [result, setResult] = useState('');
+
+        const handleFinish = () => {
+          const finalDate = gameDate ? new Date(gameDate + 'T12:00:00').toISOString() : currentGame.date;
+          finishGame(finalDate, opponent, location, result);
+          setShowFinishModal(false);
+          setGameDate('');
+          setOpponent('');
+          setLocation('');
+          setResult('');
+        };
+
+        const openFinishModal = () => {
+          const today = new Date().toISOString().split('T')[0];
+          setGameDate(today);
+          setShowFinishModal(true);
+        };
+
+        return (
+          <div className="p-4 pb-24">
+            <div className="bg-blue-900 rounded-lg p-3 mb-4">
+              <div className="text-blue-200 text-sm">Current Game</div>
+              <div className="text-white font-semibold">
+                {new Date(currentGame.date).toLocaleDateString()} {new Date(currentGame.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+              </div>
+              <button
+                onClick={openFinishModal}
+                className="mt-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold py-2 px-4 rounded w-full"
+              >
+                Finish Game & Start New
+              </button>
+            </div>
+
+            {showFinishModal && (
+              <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+                <div className="bg-slate-800 rounded-lg p-6 max-w-sm w-full max-h-[90vh] overflow-y-auto">
+                  <h3 className="text-white text-xl font-bold mb-4">Finish Game</h3>
+                  
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-slate-400 text-sm mb-2 block">Game Date</label>
+                      <input
+                        type="date"
+                        value={gameDate}
+                        onChange={(e) => setGameDate(e.target.value)}
+                        className="w-full bg-slate-700 text-white px-3 py-2 rounded border border-slate-600 focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 text-sm mb-2 block">Opponent</label>
+                      <input
+                        type="text"
+                        value={opponent}
+                        onChange={(e) => setOpponent(e.target.value)}
+                        placeholder="Team name"
+                        className="w-full bg-slate-700 text-white px-3 py-2 rounded border border-slate-600 focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 text-sm mb-2 block">Location</label>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setLocation('home')}
+                          className={`flex-1 py-2 rounded font-semibold ${location === 'home' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300'}`}
+                        >
+                          Home
+                        </button>
+                        <button
+                          onClick={() => setLocation('away')}
+                          className={`flex-1 py-2 rounded font-semibold ${location === 'away' ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300'}`}
+                        >
+                          Away
+                        </button>
+                        <button
+                          onClick={() => setLocation('tournament')}
+                          className={`flex-1 py-2 rounded font-semibold ${location === 'tournament' ? 'bg-orange-600 text-white' : 'bg-slate-700 text-slate-300'}`}
+                        >
+                          Tournament
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 text-sm mb-2 block">Result (optional)</label>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setResult('W')}
+                          className={`flex-1 py-2 rounded font-semibold ${result === 'W' ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-300'}`}
+                        >
+                          Win
+                        </button>
+                        <button
+                          onClick={() => setResult('L')}
+                          className={`flex-1 py-2 rounded font-semibold ${result === 'L' ? 'bg-red-600 text-white' : 'bg-slate-700 text-slate-300'}`}
+                        >
+                          Loss
+                        </button>
+                        <button
+                          onClick={() => setResult('T')}
+                          className={`flex-1 py-2 rounded font-semibold ${result === 'T' ? 'bg-yellow-600 text-white' : 'bg-slate-700 text-slate-300'}`}
+                        >
+                          Tie
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 mt-6">
+                    <button
+                      onClick={() => setShowFinishModal(false)}
+                      className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 px-4 rounded font-semibold"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleFinish}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded font-semibold"
+                    >
+                      Save Game
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-slate-800 rounded-lg p-3 mb-4 overflow-x-auto">
+              <div className="flex gap-2 min-w-max">
+                {players.map(player => (
+                  <button
+                    key={player.id}
+                    onClick={() => setSelectedPlayer(player.id)}
+                    className={`px-4 py-3 rounded-lg font-semibold transition-colors whitespace-nowrap ${
+                      selectedPlayer === player.id
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                    }`}
+                  >
+                    #{player.number} {player.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {/* Offensive Stats */}
+              <div>
+                <h3 className="text-blue-400 text-lg font-bold mb-3">Offensive</h3>
+                <StatButton label="Individual Goals" value={currentStats.individualGoals} statKey="individualGoals" />
+                <StatButton label="Shift Goals (Team Goals While On Ice)" value={currentStats.shiftGoals} statKey="shiftGoals" />
+                <StatButton label="Assists" value={currentStats.assists} statKey="assists" />
+                <StatButton label="Shot Attempts" value={currentStats.shotAttempts} statKey="shotAttempts" />
+              </div>
+
+              {/* Possession Stats */}
+              <div>
+                <h3 className="text-green-400 text-lg font-bold mb-3">Possession</h3>
+                <StatButton label="Takeaways" value={currentStats.takeaways} statKey="takeaways" />
+                <StatButton label="Giveaways" value={currentStats.giveaways} statKey="giveaways" />
+              </div>
+
+              {/* Defensive Stats */}
+              <div>
+                <h3 className="text-yellow-400 text-lg font-bold mb-3">Defensive</h3>
+                <StatButton label="Defensive Plays" value={currentStats.defensivePlays} statKey="defensivePlays" />
+                <StatButton label="Shot Blocks" value={currentStats.shotBlocks} statKey="shotBlocks" />
+                <StatButton label="Time in D-Zone (seconds)" value={currentStats.timeInDefensiveZone} statKey="timeInDefensiveZone" />
+                <StatButton label="Shots Against" value={currentStats.shotsAgainst} statKey="shotsAgainst" />
+                <StatButton label="Goals Against" value={currentStats.goalsAgainst} statKey="goalsAgainst" />
+              </div>
+
+              {/* Discipline */}
+              <div>
+                <h3 className="text-orange-400 text-lg font-bold mb-3">Discipline</h3>
+                <StatButton label="Penalty Minutes" value={currentStats.penaltyMinutes} statKey="penaltyMinutes" />
+                <StatButton label="Game Suspensions" value={currentStats.gameSuspensions} statKey="gameSuspensions" />
+              </div>
+
+              {/* Auto-Calculated Stats */}
+              <div className="space-y-3">
+                <div className="bg-slate-800 rounded-lg p-4">
+                  <div className="text-slate-400 text-sm mb-1">Plus/Minus</div>
+                  <div className="text-slate-500 text-xs mb-2">(Shift Goals - Goals Against)</div>
+                  <div className={`text-4xl font-bold ${
+                    calculatePlusMinus(currentStats) > 0 ? 'text-green-400' : 
+                    calculatePlusMinus(currentStats) < 0 ? 'text-red-400' : 'text-slate-300'
+                  }`}>
+                    {calculatePlusMinus(currentStats) > 0 ? '+' : ''}{calculatePlusMinus(currentStats)}
+                  </div>
+                </div>
+
+                <div className="bg-slate-800 rounded-lg p-4">
+                  <div className="text-slate-400 text-sm mb-1">Points</div>
+                  <div className="text-slate-500 text-xs mb-2">(Individual Goals + Assists)</div>
+                  <div className="text-white text-4xl font-bold">
+                    {calculatePoints(currentStats)}
+                  </div>
+                </div>
+
+                <div className="bg-slate-800 rounded-lg p-4">
+                  <div className="text-slate-400 text-sm mb-1">Shooting %</div>
+                  <div className="text-slate-500 text-xs mb-2">(Individual Goals / Shot Attempts)</div>
+                  <div className="text-white text-4xl font-bold">
+                    {calculateShootingPct(currentStats)}%
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      const GamesView = () => {
+        if (selectedGameId) {
+          const game = games.find(g => g.id === selectedGameId);
+          if (!game) {
+            setSelectedGameId(null);
+            return null;
+          }
+
+          const getLocationBadge = (location) => {
+            if (location === 'home') return <span className="ml-2 text-xs px-2 py-1 rounded bg-blue-600 text-white">Home</span>;
+            if (location === 'away') return <span className="ml-2 text-xs px-2 py-1 rounded bg-purple-600 text-white">Away</span>;
+            if (location === 'tournament') return <span className="ml-2 text-xs px-2 py-1 rounded bg-orange-600 text-white">Tournament</span>;
+            return null;
+          };
+
+          return (
+            <div className="p-4 pb-24">
+              <button
+                onClick={() => setSelectedGameId(null)}
+                className="text-blue-400 mb-4 flex items-center"
+              >
+                ← Back to Games
+              </button>
+              
+              <div className="bg-slate-800 rounded-lg p-4 mb-4">
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <div className="text-white font-bold text-lg">
+                      vs {game.opponent || 'Opponent'}
+                      {game.result && (
+                        <span className={`ml-2 text-sm px-2 py-1 rounded ${
+                          game.result === 'W' ? 'bg-green-600' :
+                          game.result === 'L' ? 'bg-red-600' :
+                          'bg-yellow-600'
+                        }`}>
+                          {game.result}
+                        </span>
+                      )}
+                      {getLocationBadge(game.location)}
+                    </div>
+                    <div className="text-slate-400 text-sm">
+                      {new Date(game.date).toLocaleDateString('en-US', { 
+                        weekday: 'short', 
+                        year: 'numeric', 
+                        month: 'short', 
+                        day: 'numeric' 
+                      })}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => deleteGame(game.id)}
+                    className="text-red-400 text-sm hover:text-red-300"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {players.map(player => {
+                  const playerStats = game.stats[player.id] || defaultStats;
+                  const plusMinus = calculatePlusMinus(playerStats);
+                  return (
+                    <div key={player.id} className="bg-slate-800 rounded-lg p-4">
+                      <div className="text-white font-bold text-lg mb-2">
+                        #{player.number} {player.name}
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 text-sm">
+                        <div>
+                          <div className="text-slate-400">Goals</div>
+                          <div className="text-white font-semibold">{playerStats.individualGoals}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Assists</div>
+                          <div className="text-white font-semibold">{playerStats.assists}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Points</div>
+                          <div className="text-white font-semibold">{calculatePoints(playerStats)}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Shots</div>
+                          <div className="text-white font-semibold">{playerStats.shotAttempts}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Shooting %</div>
+                          <div className="text-white font-semibold">{calculateShootingPct(playerStats)}%</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">+/-</div>
+                          <div className={`font-semibold ${
+                            plusMinus > 0 ? 'text-green-400' : 
+                            plusMinus < 0 ? 'text-red-400' : 'text-slate-300'
+                          }`}>
+                            {plusMinus > 0 ? '+' : ''}{plusMinus}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Takeaways</div>
+                          <div className="text-white font-semibold">{playerStats.takeaways}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Giveaways</div>
+                          <div className="text-white font-semibold">{playerStats.giveaways}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Def Plays</div>
+                          <div className="text-white font-semibold">{playerStats.defensivePlays}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Shot Blocks</div>
+                          <div className="text-white font-semibold">{playerStats.shotBlocks}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">D-Zone Time</div>
+                          <div className="text-white font-semibold">{playerStats.timeInDefensiveZone}s</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">SA/GA</div>
+                          <div className="text-white font-semibold">
+                            {playerStats.shotsAgainst}/{playerStats.goalsAgainst}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">PIM</div>
+                          <div className="text-white font-semibold">{playerStats.penaltyMinutes}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Suspensions</div>
+                          <div className="text-white font-semibold">{playerStats.gameSuspensions}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        }
+
+        const getLocationBadge = (location) => {
+          if (location === 'home') return <span className="ml-2 text-xs px-2 py-1 rounded bg-blue-600 text-white">Home</span>;
+          if (location === 'away') return <span className="ml-2 text-xs px-2 py-1 rounded bg-purple-600 text-white">Away</span>;
+          if (location === 'tournament') return <span className="ml-2 text-xs px-2 py-1 rounded bg-orange-600 text-white">Tournament</span>;
+          return null;
+        };
+
+        return (
+          <div className="p-4 pb-24">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-white text-2xl font-bold">Game History</h2>
+              {games.length > 0 && (
+                <button
+                  onClick={deleteAllGames}
+                  className="text-red-400 text-sm hover:text-red-300"
+                >
+                  Delete All
+                </button>
+              )}
+            </div>
+            
+            {games.length === 0 ? (
+              <div className="text-slate-400 text-center py-8">
+                No completed games yet. Finish your first game to see it here!
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {games.map(game => {
+                  const totalGoals = players.reduce((sum, player) => {
+                    return sum + (game.stats[player.id]?.goals || 0);
+                  }, 0);
+                  const totalAssists = players.reduce((sum, player) => {
+                    return sum + (game.stats[player.id]?.assists || 0);
+                  }, 0);
+                  
+                  return (
+                    <button
+                      key={game.id}
+                      onClick={() => setSelectedGameId(game.id)}
+                      className="w-full bg-slate-800 rounded-lg p-4 text-left hover:bg-slate-700 transition-colors"
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <div className="text-white font-bold">
+                            vs {game.opponent || 'Opponent'}
+                            {game.result && (
+                              <span className={`ml-2 text-sm px-2 py-1 rounded ${
+                                game.result === 'W' ? 'bg-green-600' :
+                                game.result === 'L' ? 'bg-red-600' :
+                                'bg-yellow-600'
+                              }`}>
+                                {game.result}
+                              </span>
+                            )}
+                            {getLocationBadge(game.location)}
+                          </div>
+                          <div className="text-slate-400 text-sm">
+                            {new Date(game.date).toLocaleDateString('en-US', { 
+                              month: 'short', 
+                              day: 'numeric',
+                              year: 'numeric'
+                            })}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-white font-semibold">{totalGoals}G {totalAssists}A</div>
+                          <div className="text-slate-400 text-sm">Team Total</div>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      const CumulativeView = () => (
+        <div className="p-4 pb-24">
+          <h2 className="text-white text-2xl font-bold mb-2">Season Stats</h2>
+          <div className="text-slate-400 text-sm mb-4">
+            {games.length + 1} Games (including current)
+          </div>
+
+          {/* Export Buttons */}
+          <div className="flex gap-2 mb-4">
+            <button
+              onClick={() => exportToCSV('season')}
+              className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded font-semibold text-sm"
+            >
+              Export CSV
+            </button>
+            <button
+              onClick={generatePDF}
+              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded font-semibold text-sm"
+            >
+              Export PDF
+            </button>
+          </div>
+          
+          <div className="space-y-3">
+            {players.map(player => {
+              const cumulativeStats = getCumulativeStats(player.id);
+              const plusMinus = calculatePlusMinus(cumulativeStats);
+              const gamesPlayed = games.length + 1;
+              
+              return (
+                <div key={player.id} className="bg-slate-800 rounded-lg p-4">
+                  <div className="text-white font-bold text-lg mb-3">
+                    #{player.number} {player.name}
+                  </div>
+                  <div className="grid grid-cols-3 gap-3 text-sm mb-3">
+                    <div>
+                      <div className="text-slate-400">Goals</div>
+                      <div className="text-white font-semibold text-lg">{cumulativeStats.individualGoals}</div>
+                      <div className="text-slate-500 text-xs">{(cumulativeStats.individualGoals / gamesPlayed).toFixed(1)}/game</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-400">Assists</div>
+                      <div className="text-white font-semibold text-lg">{cumulativeStats.assists}</div>
+                      <div className="text-slate-500 text-xs">{(cumulativeStats.assists / gamesPlayed).toFixed(1)}/game</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-400">Points</div>
+                      <div className="text-white font-semibold text-lg">
+                        {calculatePoints(cumulativeStats)}
+                      </div>
+                      <div className="text-slate-500 text-xs">
+                        {(calculatePoints(cumulativeStats) / gamesPlayed).toFixed(1)}/game
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-sm border-t border-slate-700 pt-3">
+                    <div>
+                      <div className="text-slate-400">+/-</div>
+                      <div className={`font-semibold ${
+                        plusMinus > 0 ? 'text-green-400' : 
+                        plusMinus < 0 ? 'text-red-400' : 'text-slate-300'
+                      }`}>
+                        {plusMinus > 0 ? '+' : ''}{plusMinus}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-slate-400">Shots</div>
+                      <div className="text-white font-semibold">{cumulativeStats.shotAttempts}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-400">Shooting %</div>
+                      <div className="text-white font-semibold">{calculateShootingPct(cumulativeStats)}%</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-400">Takeaways</div>
+                      <div className="text-white font-semibold">{cumulativeStats.takeaways}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-400">Giveaways</div>
+                      <div className="text-white font-semibold">{cumulativeStats.giveaways}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-400">Def Plays</div>
+                      <div className="text-white font-semibold">{cumulativeStats.defensivePlays}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-400">Shot Blocks</div>
+                      <div className="text-white font-semibold">{cumulativeStats.shotBlocks}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-400">PIM</div>
+                      <div className="text-white font-semibold">{cumulativeStats.penaltyMinutes}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-400">Suspensions</div>
+                      <div className="text-white font-semibold">{cumulativeStats.gameSuspensions}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+
+      const ChartsView = () => {
+        const [chartType, setChartType] = useState('goals');
+        const chartRef = React.useRef(null);
+        const chartInstanceRef = React.useRef(null);
+
+        React.useEffect(() => {
+          if (games.length === 0) return;
+
+          const ctx = chartRef.current?.getContext('2d');
+          if (!ctx) return;
+
+          // Destroy previous chart
+          if (chartInstanceRef.current) {
+            chartInstanceRef.current.destroy();
+          }
+
+          const sortedGames = [...games].reverse(); // Oldest to newest
+
+          if (chartType === 'goals' || chartType === 'assists' || chartType === 'points') {
+            // Line chart for goals/assists over time
+            const datasets = players.map((player, index) => {
+              const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+              const data = sortedGames.map(game => {
+                const stats = game.stats[player.id] || defaultStats;
+                if (chartType === 'goals') return stats.individualGoals;
+                if (chartType === 'assists') return stats.assists;
+                return calculatePoints(stats); // points
+              });
+
+              return {
+                label: player.name,
+                data: data,
+                borderColor: colors[index % colors.length],
+                backgroundColor: colors[index % colors.length] + '20',
+                tension: 0.3,
+                fill: false
+              };
+            });
+
+            chartInstanceRef.current = new Chart(ctx, {
+              type: 'line',
+              data: {
+                labels: sortedGames.map((g, i) => `Game ${i + 1}`),
+                datasets: datasets
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: {
+                    labels: { color: '#e5e7eb' }
+                  },
+                  title: {
+                    display: true,
+                    text: `${chartType.charAt(0).toUpperCase() + chartType.slice(1)} Per Game`,
+                    color: '#fff',
+                    font: { size: 16 }
+                  }
+                },
+                scales: {
+                  y: {
+                    beginAtZero: true,
+                    ticks: { color: '#9ca3af' },
+                    grid: { color: '#374151' }
+                  },
+                  x: {
+                    ticks: { color: '#9ca3af' },
+                    grid: { color: '#374151' }
+                  }
+                }
+              }
+            });
+          } else if (chartType === 'comparison') {
+            // Bar chart comparing total stats
+            const statLabels = players.map(p => p.name);
+            const goalsData = players.map(p => getCumulativeStats(p.id).individualGoals);
+            const assistsData = players.map(p => getCumulativeStats(p.id).assists);
+
+            chartInstanceRef.current = new Chart(ctx, {
+              type: 'bar',
+              data: {
+                labels: statLabels,
+                datasets: [
+                  {
+                    label: 'Goals',
+                    data: goalsData,
+                    backgroundColor: '#3b82f6'
+                  },
+                  {
+                    label: 'Assists',
+                    data: assistsData,
+                    backgroundColor: '#10b981'
+                  }
+                ]
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: {
+                    labels: { color: '#e5e7eb' }
+                  },
+                  title: {
+                    display: true,
+                    text: 'Season Goals & Assists Comparison',
+                    color: '#fff',
+                    font: { size: 16 }
+                  }
+                },
+                scales: {
+                  y: {
+                    beginAtZero: true,
+                    ticks: { color: '#9ca3af' },
+                    grid: { color: '#374151' }
+                  },
+                  x: {
+                    ticks: { color: '#9ca3af' },
+                    grid: { color: '#374151' }
+                  }
+                }
+              }
+            });
+          }
+
+          return () => {
+            if (chartInstanceRef.current) {
+              chartInstanceRef.current.destroy();
+            }
+          };
+        }, [chartType, games, players]);
+
+        if (games.length === 0) {
+          return (
+            <div className="p-4 pb-24">
+              <div className="text-slate-400 text-center py-8">
+                No game data yet. Complete some games to see charts!
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div className="p-4 pb-24">
+            <h2 className="text-white text-2xl font-bold mb-4">Stats Charts</h2>
+
+            {/* Chart Type Selector */}
+            <div className="bg-slate-800 rounded-lg p-3 mb-4 overflow-x-auto">
+              <div className="flex gap-2 min-w-max">
+                <button
+                  onClick={() => setChartType('goals')}
+                  className={`px-4 py-2 rounded-lg font-semibold transition-colors ${
+                    chartType === 'goals' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  Goals
+                </button>
+                <button
+                  onClick={() => setChartType('assists')}
+                  className={`px-4 py-2 rounded-lg font-semibold transition-colors ${
+                    chartType === 'assists' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  Assists
+                </button>
+                <button
+                  onClick={() => setChartType('points')}
+                  className={`px-4 py-2 rounded-lg font-semibold transition-colors ${
+                    chartType === 'points' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  Points
+                </button>
+                <button
+                  onClick={() => setChartType('comparison')}
+                  className={`px-4 py-2 rounded-lg font-semibold transition-colors ${
+                    chartType === 'comparison' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  Compare
+                </button>
+              </div>
+            </div>
+
+            {/* Chart Canvas */}
+            <div className="bg-slate-800 rounded-lg p-4" style={{ height: '400px' }}>
+              <canvas ref={chartRef}></canvas>
+            </div>
+
+            {/* Export Button */}
+            <button
+              onClick={() => exportToCSV('games')}
+              className="w-full mt-4 bg-green-600 hover:bg-green-700 text-white py-3 px-4 rounded-lg font-semibold"
+            >
+              Export Game-by-Game CSV
+            </button>
+          </div>
+        );
+      };
+
+      const SettingsView = () => (
+        <div className="p-4 pb-24">
+          <h2 className="text-white text-2xl font-bold mb-4">Settings</h2>
+          
+          <div className="space-y-3 mb-6">
+            <h3 className="text-slate-400 text-lg font-semibold">Edit Players</h3>
+            {players.map(player => (
+              <div key={player.id} className="bg-slate-800 rounded-lg p-4">
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={player.number}
+                    onChange={(e) => updatePlayerName(player.id, player.name, e.target.value)}
+                    placeholder="Jersey #"
+                    className="w-full bg-slate-700 text-white px-3 py-2 rounded border border-slate-600 focus:border-blue-500 focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    value={player.name}
+                    onChange={(e) => updatePlayerName(player.id, e.target.value, player.number)}
+                    placeholder="Player Name"
+                    className="w-full bg-slate-700 text-white px-3 py-2 rounded border border-slate-600 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+
+      return (
+        <div className="min-h-screen bg-slate-900 pb-20">
+          <div className="bg-slate-800 p-4 sticky top-0 z-10 shadow-lg">
+            <h1 className="text-white text-2xl font-bold text-center">Youth Hockey Stats</h1>
+          </div>
+
+          {view === 'track' && <TrackingView />}
+          {view === 'games' && <GamesView />}
+          {view === 'cumulative' && <CumulativeView />}
+          {view === 'charts' && <ChartsView />}
+          {view === 'settings' && <SettingsView />}
+
+          <div className="fixed bottom-0 left-0 right-0 bg-slate-800 border-t border-slate-700 flex text-xs">
+            <button
+              onClick={() => setView('track')}
+              className={`flex-1 py-3 text-center font-semibold transition-colors ${
+                view === 'track' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Current
+            </button>
+            <button
+              onClick={() => setView('games')}
+              className={`flex-1 py-3 text-center font-semibold transition-colors ${
+                view === 'games' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Games
+            </button>
+            <button
+              onClick={() => setView('cumulative')}
+              className={`flex-1 py-3 text-center font-semibold transition-colors ${
+                view === 'cumulative' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Season
+            </button>
+            <button
+              onClick={() => setView('charts')}
+              className={`flex-1 py-3 text-center font-semibold transition-colors ${
+                view === 'charts' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Charts
+            </button>
+            <button
+              onClick={() => setView('settings')}
+              className={`flex-1 py-3 text-center font-semibold transition-colors ${
+                view === 'settings' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Settings
+            </button>
+          </div>
+        </div>
+      );
+    };
+
+    ReactDOM.render(<HockeyStatsTracker />, document.getElementById('root'));
+  </script>
+</body>
+</html>
